@@ -1,10 +1,10 @@
-
 from flask import Flask, request, jsonify
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from auth import api_key_required
 from verifier import EmailVerifier
 from config import Config
+import os
 
 app = Flask(__name__)
 
@@ -15,24 +15,42 @@ limiter = Limiter(
     default_limits=[Config.RATELIMIT_DEFAULT]
 )
 
-@app.route('/verify', methods=['POST'])
+# Initialize the email verifier
+verifier = EmailVerifier(from_email=os.environ.get('SENDER_EMAIL', 'verify@example.com'))
+
+@app.route('/')
+def index():
+    return jsonify({
+        "service": "Email Verification API",
+        "status": "running",
+        "usage": "/api/verify?email=example@domain.com"
+    })
+
+@app.route('/api/verify', methods=['GET'])
 @api_key_required
 @limiter.limit("10 per minute")
 def verify_email():
-    data = request.get_json()
-    if not data or 'email' not in data:
+    email = request.args.get('email')
+    
+    if not email:
         return jsonify({
             "success": False,
             "message": "Email parameter is required"
         }), 400
     
-    verifier = EmailVerifier()
-    result = verifier.verify_email(data['email'])
-    return jsonify(result)
+    try:
+        result = verifier.verify_email(email)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": f"Error verifying email: {str(e)}"
+        }), 500
 
-@app.route('/health', methods=['GET'])
+@app.route('/health')
 def health_check():
-    return jsonify({"status": "healthy"}), 200
+    return jsonify({"status": "healthy"})
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port, debug=os.environ.get('DEBUG', 'False').lower() == 'true')
