@@ -1,7 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from auth import api_key_required
 from verifier import EmailVerifier
 from config import Config
 import os
@@ -27,7 +26,6 @@ def index():
     })
 
 @app.route('/api/verify', methods=['GET'])
-@api_key_required
 @limiter.limit("10 per minute")
 def verify_email():
     email = request.args.get('email')
@@ -52,5 +50,5 @@ def health_check():
     return jsonify({"status": "healthy"})
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 8080))
+    port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=os.environ.get('DEBUG', 'False').lower() == 'true')
