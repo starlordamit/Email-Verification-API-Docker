@@ -1,15 +1,13 @@
 """
 User Information Extractor for Email Verification API
-Extracts profile information, names, and social profiles from email addresses
+Extracts verified profile information and names from email addresses
 """
 
 import hashlib
 import re
 import requests
 import logging
-from typing import Dict, Any, Optional, List
-from urllib.parse import quote
-import json
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -31,13 +29,13 @@ class UserInfoExtractor:
             r'^([a-zA-Z]{2,})@',                    # just firstname@
         ]
         
-        # Social media domain mappings
-        self.social_domains = {
-            'gmail.com': {'platform': 'Google', 'type': 'email'},
-            'yahoo.com': {'platform': 'Yahoo', 'type': 'email'},
-            'outlook.com': {'platform': 'Microsoft', 'type': 'email'},
-            'hotmail.com': {'platform': 'Microsoft', 'type': 'email'},
-            'icloud.com': {'platform': 'Apple', 'type': 'email'},
+        # Known email provider mappings (factual only)
+        self.email_providers = {
+            'gmail.com': {'platform': 'Google', 'type': 'personal'},
+            'yahoo.com': {'platform': 'Yahoo', 'type': 'personal'},
+            'outlook.com': {'platform': 'Microsoft', 'type': 'personal'},
+            'hotmail.com': {'platform': 'Microsoft', 'type': 'personal'},
+            'icloud.com': {'platform': 'Apple', 'type': 'personal'},
             'protonmail.com': {'platform': 'ProtonMail', 'type': 'privacy'},
             'tutanota.com': {'platform': 'Tutanota', 'type': 'privacy'},
         }
@@ -50,13 +48,13 @@ class UserInfoExtractor:
 
     def extract_user_info(self, email: str) -> Dict[str, Any]:
         """
-        Extract comprehensive user information from email address
+        Extract verified user information from email address
         
         Args:
             email: Email address to analyze
             
         Returns:
-            Dictionary containing user information
+            Dictionary containing verified user information only
         """
         try:
             email = email.lower().strip()
@@ -67,12 +65,10 @@ class UserInfoExtractor:
                 'extracted_info': {
                     'names': self._extract_names(local_part),
                     'profile_picture': self._get_gravatar_info(email),
-                    'social_profiles': self._detect_social_profiles(email, domain),
                     'professional_info': self._analyze_professional_email(local_part, domain),
                     'domain_info': self._analyze_domain_info(domain)
                 },
-                'confidence_score': 0.0,
-                'extraction_methods': []
+                'confidence_score': 0.0
             }
             
             # Calculate confidence score
@@ -86,7 +82,6 @@ class UserInfoExtractor:
                 'email': email,
                 'extracted_info': {},
                 'confidence_score': 0.0,
-                'extraction_methods': [],
                 'error': str(e)
             }
 
@@ -205,7 +200,7 @@ class UserInfoExtractor:
             return {'error': str(e)}
 
     def _parse_gravatar_profile(self, profile_data: Dict) -> Dict[str, Any]:
-        """Parse Gravatar profile data"""
+        """Parse verified Gravatar profile data"""
         try:
             entry = profile_data.get('entry', [{}])[0]
             
@@ -213,28 +208,20 @@ class UserInfoExtractor:
                 'display_name': entry.get('displayName'),
                 'real_name': entry.get('name', {}).get('formatted'),
                 'location': entry.get('currentLocation'),
-                'bio': entry.get('aboutMe'),
-                'urls': [],
-                'social_accounts': []
+                'bio': entry.get('aboutMe')
             }
             
-            # Extract URLs and social accounts
+            # Only include verified URLs from Gravatar profile
+            urls = []
             for url_entry in entry.get('urls', []):
-                url_info = {
-                    'title': url_entry.get('title'),
-                    'url': url_entry.get('value')
-                }
-                parsed['urls'].append(url_info)
-                
-                # Try to identify social platforms
-                if url_info['url']:
-                    platform = self._identify_social_platform(url_info['url'])
-                    if platform:
-                        parsed['social_accounts'].append({
-                            'platform': platform,
-                            'url': url_info['url'],
-                            'title': url_info['title']
-                        })
+                if url_entry.get('value'):
+                    urls.append({
+                        'title': url_entry.get('title'),
+                        'url': url_entry.get('value')
+                    })
+            
+            if urls:
+                parsed['verified_urls'] = urls
             
             return parsed
             
@@ -242,54 +229,9 @@ class UserInfoExtractor:
             logger.error(f"Error parsing Gravatar profile: {e}")
             return {}
 
-    def _identify_social_platform(self, url: str) -> Optional[str]:
-        """Identify social media platform from URL"""
-        social_patterns = {
-            'twitter.com': 'Twitter',
-            'x.com': 'Twitter/X',
-            'linkedin.com': 'LinkedIn',
-            'github.com': 'GitHub',
-            'facebook.com': 'Facebook',
-            'instagram.com': 'Instagram',
-            'youtube.com': 'YouTube',
-            'medium.com': 'Medium',
-            'dev.to': 'Dev.to',
-            'stackoverflow.com': 'Stack Overflow'
-        }
-        
-        for domain, platform in social_patterns.items():
-            if domain in url.lower():
-                return platform
-        return None
 
-    def _detect_social_profiles(self, email: str, domain: str) -> Dict[str, Any]:
-        """Detect potential social media profiles"""
-        local_part = email.split('@')[0]
-        
-        social_info = {
-            'potential_profiles': [],
-            'domain_type': self.social_domains.get(domain, {'platform': 'Unknown', 'type': 'personal'}),
-            'suggested_searches': []
-        }
-        
-        # Generate potential social media profile URLs
-        platforms = {
-            'GitHub': f"https://github.com/{local_part}",
-            'Twitter': f"https://twitter.com/{local_part}",
-            'LinkedIn': f"https://linkedin.com/in/{local_part}",
-            'Instagram': f"https://instagram.com/{local_part}",
-            'Medium': f"https://medium.com/@{local_part}"
-        }
-        
-        for platform, url in platforms.items():
-            social_info['potential_profiles'].append({
-                'platform': platform,
-                'url': url,
-                'confidence': 'low',  # These are just guesses
-                'note': 'Potential profile - not verified'
-            })
-        
-        return social_info
+
+
 
     def _analyze_professional_email(self, local_part: str, domain: str) -> Dict[str, Any]:
         """Analyze if this looks like a professional email"""
@@ -305,28 +247,27 @@ class UserInfoExtractor:
             if indicator in local_part:
                 professional_info['role_indicators'].append(indicator)
         
-        # Determine email type
+        # Determine email type based on factual indicators
         if professional_info['role_indicators']:
             professional_info['is_professional'] = True
             professional_info['email_type'] = 'role_based'
-        elif domain not in ['gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com', 'icloud.com']:
+        elif domain not in self.email_providers:
             professional_info['is_professional'] = True
             professional_info['email_type'] = 'corporate'
         
         return professional_info
 
     def _analyze_domain_info(self, domain: str) -> Dict[str, Any]:
-        """Analyze domain information"""
+        """Analyze factual domain information"""
         domain_info = {
             'domain': domain,
             'type': 'unknown',
-            'platform': None,
-            'reputation': 'unknown'
+            'platform': None
         }
         
-        # Categorize domain
-        if domain in self.social_domains:
-            domain_info.update(self.social_domains[domain])
+        # Categorize domain based on factual information
+        if domain in self.email_providers:
+            domain_info.update(self.email_providers[domain])
         elif domain.endswith('.edu'):
             domain_info['type'] = 'educational'
             domain_info['platform'] = 'Educational Institution'
@@ -342,7 +283,7 @@ class UserInfoExtractor:
         return domain_info
 
     def _calculate_confidence(self, user_info: Dict[str, Any]) -> float:
-        """Calculate confidence score for extracted information"""
+        """Calculate confidence score for verified information only"""
         score = 0.0
         max_score = 0.0
         
@@ -350,24 +291,18 @@ class UserInfoExtractor:
         names = user_info['extracted_info'].get('names', {})
         if names.get('first_name'):
             if names.get('last_name'):
-                score += 0.3  # Full name found
+                score += 0.4  # Full name found
             else:
-                score += 0.15  # Only first name
-        max_score += 0.3
+                score += 0.2  # Only first name
+        max_score += 0.4
         
-        # Gravatar confidence
+        # Gravatar confidence (verified data)
         gravatar = user_info['extracted_info'].get('profile_picture', {})
         if gravatar.get('has_gravatar'):
-            score += 0.4
+            score += 0.5
             if gravatar.get('profile_data'):
-                score += 0.2
+                score += 0.1  # Additional verified profile data
         max_score += 0.6
-        
-        # Professional email detection
-        prof_info = user_info['extracted_info'].get('professional_info', {})
-        if prof_info.get('is_professional') is not None:
-            score += 0.1
-        max_score += 0.1
         
         return round(score / max_score if max_score > 0 else 0.0, 2)
 

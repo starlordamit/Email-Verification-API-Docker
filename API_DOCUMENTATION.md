@@ -54,11 +54,10 @@ The Email Verification API v2.0 is a production-ready service that provides comp
 
 ### 👤 NEW: User Information Extraction
 - **Name Detection**: Extract first/last names from email patterns
-- **Profile Pictures**: Gravatar integration with avatar URLs
-- **Professional Analysis**: Detect corporate vs personal emails
-- **Social Profiles**: Suggest potential social media accounts
+- **Profile Pictures**: Gravatar integration with verified avatar URLs
+- **Professional Analysis**: Detect corporate vs personal emails  
 - **Domain Intelligence**: Classify email providers and types
-- **Confidence Scoring**: Rate extraction accuracy (0.0-1.0)
+- **Confidence Scoring**: Rate extraction accuracy for verified data (0.0-1.0)
 
 ## ⚡ Quick Start
 
@@ -211,27 +210,13 @@ Verify a single email address.
           "display_name": "John Doe",
           "real_name": "John Doe",
           "location": "San Francisco, CA",
-          "social_accounts": [
+          "bio": "Software Developer",
+          "verified_urls": [
             {
-              "platform": "GitHub",
-              "url": "https://github.com/johndoe",
-              "title": "GitHub Profile"
+              "title": "Personal Website",
+              "url": "https://johndoe.com"
             }
           ]
-        }
-      },
-      "social_profiles": {
-        "potential_profiles": [
-          {
-            "platform": "GitHub",
-            "url": "https://github.com/john.doe",
-            "confidence": "low",
-            "note": "Potential profile - not verified"
-          }
-        ],
-        "domain_type": {
-          "platform": "Google",
-          "type": "email"
         }
       },
       "professional_info": {
@@ -263,13 +248,12 @@ Verify a single email address.
 
 **👤 User Information Fields:**
 - `user_info.extracted_info.names`: Extracted first/last names and extraction method
-- `user_info.extracted_info.profile_picture`: Gravatar avatar and profile data
-- `user_info.extracted_info.social_profiles`: Potential social media accounts
+- `user_info.extracted_info.profile_picture`: Verified Gravatar avatar and profile data
 - `user_info.extracted_info.professional_info`: Corporate vs personal email analysis
 - `user_info.extracted_info.domain_info`: Email provider classification
-- `user_info.confidence_score`: User info extraction reliability (0.0-1.0)
+- `user_info.confidence_score`: Verified information reliability (0.0-1.0)
 
-**Note**: User information extraction only runs for valid emails to reduce processing overhead.
+**Note**: User information extraction only includes verified data and runs only for valid emails.
 
 #### `POST /api/v2/bulk-verify`
 Verify multiple emails in a single request.

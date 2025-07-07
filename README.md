@@ -44,7 +44,7 @@ curl http://localhost:5004/api/docs/
 
 - 🔥 **Ultra Fast**: < 50ms response time with Redis
 - 📊 **9+ Validation Checks**: Format, domain, SMTP, disposable detection
-- 👤 **User Info Extraction**: Names, profile pictures, social profiles (NEW!)
+- 👤 **User Info Extraction**: Names, verified profile pictures (NEW!)
 - 🔄 **Bulk Processing**: Up to 100 emails per request  
 - ⚡ **Redis-Optional**: Graceful fallback to in-memory caching
 - 🛡️ **Production Security**: JWT auth, rate limiting, CORS
@@ -144,7 +144,11 @@ REQUIRE_AUTH=false
       },
       "profile_picture": {
         "has_gravatar": true,
-        "avatar_url": "https://www.gravatar.com/avatar/..."
+        "avatar_url": "https://www.gravatar.com/avatar/...",
+        "profile_data": {
+          "display_name": "John Doe",
+          "location": "San Francisco, CA"
+        }
       },
       "professional_info": {
         "is_professional": false,
