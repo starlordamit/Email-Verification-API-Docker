@@ -21,7 +21,6 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - RATE_LIMIT_STORAGE=redis://redis:6379/1
       - API_KEY=dev-api-key-123
-      - JWT_SECRET_KEY=dev-jwt-secret-key-456
       - REQUIRE_AUTH=false
       - ENABLE_SWAGGER=true
       - METRICS_ENABLED=true
@@ -165,7 +164,6 @@ services:
       - ENV=testing
       - REDIS_URL=redis://redis:6379/2
       - API_KEY=test-api-key
-      - JWT_SECRET_KEY=test-jwt-secret
     depends_on:
       - redis
     networks:

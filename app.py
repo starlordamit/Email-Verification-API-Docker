@@ -589,9 +589,10 @@ def create_app() -> Flask:
     logger.info("Flask application initialized successfully (Environment: {})".format(Config.api.ENV))
     return app
 
+# Create the application instance for WSGI servers (like gunicorn)
+app = create_app()
+
 if __name__ == '__main__':
-    app = create_app()
-    
     logger.info("Starting Email Verification API v2.0.0")
     logger.info(f"Environment: {Config.api.ENV}")
     logger.info(f"Debug mode: {Config.api.DEBUG}")
