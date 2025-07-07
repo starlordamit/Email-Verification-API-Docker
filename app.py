@@ -21,6 +21,7 @@ from sentry_sdk.integrations.flask import FlaskIntegration
 from config import Config
 from auth import require_api_key, optional_api_key, get_auth_info
 from verifier import ProductionEmailVerifier, VerificationResult
+from user_info import user_info_extractor
 
 # Initialize logging
 logger = logging.getLogger(__name__)
@@ -312,6 +313,15 @@ def create_app() -> Flask:
             # Perform verification
             result = verifier.verify_email(email)
             
+            # Extract user information (only if email is valid to avoid noise)
+            user_info = None
+            if result.is_valid:
+                try:
+                    user_info = user_info_extractor.extract_user_info(email)
+                except Exception as e:
+                    logger.warning(f"User info extraction failed for {email}: {e}")
+                    user_info = {'error': 'User info extraction failed'}
+            
             # Update metrics
             if Config.monitoring.PROMETHEUS_ENABLED:
                 status = 'valid' if result.is_valid else 'invalid'
@@ -339,6 +349,7 @@ def create_app() -> Flask:
                     },
                     'errors': result.errors
                 },
+                'user_info': user_info,
                 'timestamp': datetime.now(UTC).isoformat(),
                 'processing_time_ms': f"< {int((datetime.now(UTC) - start_time).total_seconds() * 1000)}ms"
             }
@@ -433,6 +444,15 @@ def create_app() -> Flask:
                     if result.is_deliverable:
                         deliverable_count += 1
                     
+                    # Extract user information (only if email is valid to avoid noise)
+                    user_info = None
+                    if result.is_valid:
+                        try:
+                            user_info = user_info_extractor.extract_user_info(email)
+                        except Exception as e:
+                            logger.warning(f"User info extraction failed for {email}: {e}")
+                            user_info = {'error': 'User info extraction failed'}
+                    
                     results.append({
                         'email': email,
                         'result': {
@@ -450,7 +470,8 @@ def create_app() -> Flask:
                                 'status': 'valid' if result.has_mx_record and result.mailbox_exists else 'invalid'
                             },
                             'errors': result.errors
-                        }
+                        },
+                        'user_info': user_info
                     })
                     
                     # Update metrics
@@ -471,7 +492,8 @@ def create_app() -> Flask:
                             'provider': 'Unknown',
                             'domain_info': {'domain': '', 'has_mx': False, 'mailbox_exists': False, 'smtp_status': 'error', 'status': 'error'},
                             'errors': [str(e)]
-                        }
+                        },
+                        'user_info': None
                     })
             
             # Calculate statistics

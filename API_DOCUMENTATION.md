@@ -52,6 +52,14 @@ The Email Verification API v2.0 is a production-ready service that provides comp
 - 📈 **Monitoring**: Prometheus metrics, health checks, system stats
 - 🐳 **Container Ready**: Docker and Kubernetes deployment support
 
+### 👤 NEW: User Information Extraction
+- **Name Detection**: Extract first/last names from email patterns
+- **Profile Pictures**: Gravatar integration with avatar URLs
+- **Professional Analysis**: Detect corporate vs personal emails
+- **Social Profiles**: Suggest potential social media accounts
+- **Domain Intelligence**: Classify email providers and types
+- **Confidence Scoring**: Rate extraction accuracy (0.0-1.0)
+
 ## ⚡ Quick Start
 
 ### Prerequisites
@@ -170,20 +178,74 @@ Verify a single email address.
 ```json
 {
   "success": true,
-  "email": "user@example.com",
+  "email": "john.doe@gmail.com",
   "result": {
     "is_valid": true,
-    "is_deliverable": false,
+    "is_deliverable": true,
     "is_role_account": false,
     "is_disposable": false,
     "confidence_score": 0.85,
-    "provider": "Unknown",
+    "provider": "Gmail",
     "domain_info": {
-      "domain": "example.com",
+      "domain": "gmail.com",
       "has_mx": true,
       "status": "valid"
     },
-    "errors": ["SMTP verification failed"]
+    "errors": []
+  },
+  "user_info": {
+    "email": "john.doe@gmail.com",
+    "extracted_info": {
+      "names": {
+        "first_name": "John",
+        "last_name": "Doe",
+        "full_name": "John Doe",
+        "username": "john.doe",
+        "extraction_method": "pattern_0_two_parts"
+      },
+      "profile_picture": {
+        "gravatar_hash": "abc123...",
+        "avatar_url": "https://www.gravatar.com/avatar/abc123...?s=200",
+        "has_gravatar": true,
+        "profile_data": {
+          "display_name": "John Doe",
+          "real_name": "John Doe",
+          "location": "San Francisco, CA",
+          "social_accounts": [
+            {
+              "platform": "GitHub",
+              "url": "https://github.com/johndoe",
+              "title": "GitHub Profile"
+            }
+          ]
+        }
+      },
+      "social_profiles": {
+        "potential_profiles": [
+          {
+            "platform": "GitHub",
+            "url": "https://github.com/john.doe",
+            "confidence": "low",
+            "note": "Potential profile - not verified"
+          }
+        ],
+        "domain_type": {
+          "platform": "Google",
+          "type": "email"
+        }
+      },
+      "professional_info": {
+        "is_professional": false,
+        "email_type": "personal",
+        "company_domain": "gmail.com"
+      },
+      "domain_info": {
+        "domain": "gmail.com",
+        "type": "email",
+        "platform": "Google"
+      }
+    },
+    "confidence_score": 0.75
   },
   "timestamp": "2025-07-07T14:51:39.407418",
   "processing_time_ms": "< 50ms"
@@ -198,6 +260,16 @@ Verify a single email address.
 - `confidence_score`: Overall reliability (0.0-1.0)
 - `provider`: Email service provider name
 - `domain_info`: Domain validation details
+
+**👤 User Information Fields:**
+- `user_info.extracted_info.names`: Extracted first/last names and extraction method
+- `user_info.extracted_info.profile_picture`: Gravatar avatar and profile data
+- `user_info.extracted_info.social_profiles`: Potential social media accounts
+- `user_info.extracted_info.professional_info`: Corporate vs personal email analysis
+- `user_info.extracted_info.domain_info`: Email provider classification
+- `user_info.confidence_score`: User info extraction reliability (0.0-1.0)
+
+**Note**: User information extraction only runs for valid emails to reduce processing overhead.
 
 #### `POST /api/v2/bulk-verify`
 Verify multiple emails in a single request.

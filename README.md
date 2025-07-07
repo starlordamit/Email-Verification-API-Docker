@@ -44,6 +44,7 @@ curl http://localhost:5004/api/docs/
 
 - 🔥 **Ultra Fast**: < 50ms response time with Redis
 - 📊 **9+ Validation Checks**: Format, domain, SMTP, disposable detection
+- 👤 **User Info Extraction**: Names, profile pictures, social profiles (NEW!)
 - 🔄 **Bulk Processing**: Up to 100 emails per request  
 - ⚡ **Redis-Optional**: Graceful fallback to in-memory caching
 - 🛡️ **Production Security**: JWT auth, rate limiting, CORS
@@ -120,7 +121,7 @@ REQUIRE_AUTH=false
 ```json
 {
   "success": true,
-  "email": "user@gmail.com",
+  "email": "john.doe@gmail.com",
   "result": {
     "is_valid": true,
     "is_deliverable": true,
@@ -133,6 +134,24 @@ REQUIRE_AUTH=false
       "has_mx": true,
       "status": "valid"
     }
+  },
+  "user_info": {
+    "extracted_info": {
+      "names": {
+        "first_name": "John",
+        "last_name": "Doe",
+        "full_name": "John Doe"
+      },
+      "profile_picture": {
+        "has_gravatar": true,
+        "avatar_url": "https://www.gravatar.com/avatar/..."
+      },
+      "professional_info": {
+        "is_professional": false,
+        "email_type": "personal"
+      }
+    },
+    "confidence_score": 0.75
   },
   "processing_time": "< 50ms"
 }
