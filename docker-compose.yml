@@ -1,0 +1,197 @@
+version: '3.8'
+
+services:
+  # Main API Service
+  email-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+      args:
+        BUILD_DATE: ${BUILD_DATE:-}
+        VERSION: ${VERSION:-2.0.0}
+        VCS_REF: ${VCS_REF:-}
+    ports:
+      - "8000:8000"
+    environment:
+      - ENV=development
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+      - LOG_FORMAT=json
+      - REDIS_URL=redis://redis:6379/0
+      - RATE_LIMIT_STORAGE=redis://redis:6379/1
+      - API_KEY=dev-api-key-123
+      - JWT_SECRET_KEY=dev-jwt-secret-key-456
+      - REQUIRE_AUTH=false
+      - ENABLE_SWAGGER=true
+      - METRICS_ENABLED=true
+      - SENTRY_DSN=${SENTRY_DSN:-}
+    volumes:
+      - .:/app
+      - email-api-logs:/app/logs
+    depends_on:
+      - redis
+    networks:
+      - email-verification-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Redis Cache and Rate Limiting
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+      - ./redis.conf:/etc/redis/redis.conf:ro
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+    networks:
+      - email-verification-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Prometheus Monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - email-verification-network
+    restart: unless-stopped
+
+  # Grafana Dashboard
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    networks:
+      - email-verification-network
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+  # Load Balancer (Nginx)
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - nginx-logs:/var/log/nginx
+    depends_on:
+      - email-api
+    networks:
+      - email-verification-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Log Aggregation (Optional)
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      - email-verification-network
+    restart: unless-stopped
+    profiles:
+      - logging
+
+  # Kibana Dashboard (Optional)
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+    networks:
+      - email-verification-network
+    restart: unless-stopped
+    profiles:
+      - logging
+
+  # Test Suite
+  test-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    command: ["pytest", "-v", "--cov=.", "--cov-report=html", "--cov-report=term"]
+    volumes:
+      - .:/app
+      - test-reports:/app/htmlcov
+    environment:
+      - ENV=testing
+      - REDIS_URL=redis://redis:6379/2
+      - API_KEY=test-api-key
+      - JWT_SECRET_KEY=test-jwt-secret
+    depends_on:
+      - redis
+    networks:
+      - email-verification-network
+    profiles:
+      - testing
+
+volumes:
+  redis-data:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+  elasticsearch-data:
+    driver: local
+  email-api-logs:
+    driver: local
+  nginx-logs:
+    driver: local
+  test-reports:
+    driver: local
+
+networks:
+  email-verification-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16 
