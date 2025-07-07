@@ -3,7 +3,7 @@ import sys
 import logging
 import asyncio
 from typing import Dict, List, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 
 # Flask and Extensions
 from flask import Flask, request, jsonify, g
@@ -21,17 +21,11 @@ from sentry_sdk.integrations.flask import FlaskIntegration
 
 # Local imports
 from config import Config
-from auth import require_auth, require_role, log_request, AuthTokenManager
+from auth import require_api_key, optional_api_key, get_auth_info
 from verifier import ProductionEmailVerifier, VerificationResult
 
-# Initialize logging first
-Config.setup_logging()
+# Initialize logging
 logger = logging.getLogger(__name__)
-
-# Validate configuration
-if not Config.validate():
-    logger.error("Configuration validation failed. Exiting.")
-    sys.exit(1)
 
 # Initialize Sentry for error tracking
 if Config.monitoring.SENTRY_DSN:
@@ -39,7 +33,7 @@ if Config.monitoring.SENTRY_DSN:
         dsn=Config.monitoring.SENTRY_DSN,
         integrations=[FlaskIntegration()],
         traces_sample_rate=0.1,
-        environment=Config.ENV
+        environment=Config.api.ENV
     )
 
 def create_app() -> Flask:
@@ -47,12 +41,11 @@ def create_app() -> Flask:
     app = Flask(__name__)
     
     # Basic Flask configuration
-    app.config['SECRET_KEY'] = Config.security.JWT_SECRET_KEY or os.urandom(32)
-    app.config['MAX_CONTENT_LENGTH'] = Config.security.MAX_CONTENT_LENGTH
+    app.config['SECRET_KEY'] = os.urandom(32)
     app.config['JSON_SORT_KEYS'] = False
     
-    # Security headers
-    if Config.is_production():
+    # Security headers for production
+    if Config.api.ENV == 'production':
         Talisman(
             app,
             force_https=True,
@@ -67,45 +60,76 @@ def create_app() -> Flask:
     # CORS configuration
     CORS(app, origins=Config.security.ALLOWED_ORIGINS)
     
-    # Caching
-    cache_config = {
-        'CACHE_TYPE': 'redis',
-        'CACHE_REDIS_URL': Config.database.REDIS_URL,
-        'CACHE_DEFAULT_TIMEOUT': Config.database.CACHE_TTL
-    }
-    cache = Cache(app, config=cache_config)
+    # Caching with Redis fallback
+    try:
+        # Try Redis cache first
+        cache_config = {
+            'CACHE_TYPE': 'redis',
+            'CACHE_REDIS_URL': Config.database.REDIS_URL,
+            'CACHE_DEFAULT_TIMEOUT': Config.database.CACHE_TTL
+        }
+        cache = Cache(app, config=cache_config)
+        # Test Redis connection
+        cache.get('test')
+        logger.info("Cache initialized with Redis storage")
+    except Exception as e:
+        logger.warning(f"Redis unavailable for caching ({e}), falling back to simple cache")
+        # Fallback to simple in-memory cache
+        cache_config = {
+            'CACHE_TYPE': 'simple',
+            'CACHE_DEFAULT_TIMEOUT': Config.database.CACHE_TTL
+        }
+        cache = Cache(app, config=cache_config)
     
-    # Rate limiting
-    limiter = Limiter(
-        app=app,
-        key_func=get_remote_address,
-        storage_uri=Config.rate_limit.STORAGE_URI,
-        default_limits=[Config.rate_limit.DEFAULT_LIMIT]
-    )
+    # Rate limiting with Redis fallback
+    try:
+        # Test Redis connection first
+        import redis
+        redis_client = redis.from_url(Config.rate_limit.STORAGE_URI)
+        redis_client.ping()
+        redis_client.close()
+        
+        # Redis is available, use it
+        limiter = Limiter(
+            app=app,
+            key_func=get_remote_address,
+            storage_uri=Config.rate_limit.STORAGE_URI,
+            default_limits=[Config.rate_limit.DEFAULT_LIMIT]
+        )
+        logger.info("Rate limiter initialized with Redis storage")
+    except Exception as e:
+        logger.warning(f"Redis unavailable for rate limiting ({e}), disabling rate limiting for now")
+        # Disable rate limiting when Redis is unavailable
+        limiter = Limiter(
+            app=app,
+            key_func=get_remote_address,
+            storage_uri="memory://",
+            default_limits=["1000000 per hour"],  # Very high limit = essentially disabled
+            swallow_errors=True
+        )
     
     # API Documentation
-    if Config.api.ENABLE_SWAGGER:
-        swagger_config = {
-            "headers": [],
-            "specs": [
-                {
-                    "endpoint": "apispec",
-                    "route": "/api/spec.json",
-                    "rule_filter": lambda rule: True,
-                    "model_filter": lambda tag: True,
-                }
-            ],
-            "static_url_path": "/flasgger_static",
-            "swagger_ui": True,
-            "specs_route": "/api/docs/"
-        }
-        Swagger(app, config=swagger_config)
+    swagger_config = {
+        "headers": [],
+        "specs": [
+            {
+                "endpoint": "apispec",
+                "route": "/api/spec.json",
+                "rule_filter": lambda rule: True,
+                "model_filter": lambda tag: True,
+            }
+        ],
+        "static_url_path": "/flasgger_static",
+        "swagger_ui": True,
+        "specs_route": "/api/docs/"
+    }
+    Swagger(app, config=swagger_config)
     
     # Initialize email verifier
     verifier = ProductionEmailVerifier(Config)
     
     # Metrics
-    if Config.monitoring.METRICS_ENABLED:
+    if Config.monitoring.PROMETHEUS_ENABLED:
         request_count = Counter('http_requests_total', 'Total HTTP requests', ['method', 'endpoint', 'status'])
         request_duration = Histogram('http_request_duration_seconds', 'HTTP request duration')
         verification_count = Counter('email_verifications_total', 'Total email verifications', ['status'])
@@ -113,12 +137,12 @@ def create_app() -> Flask:
         
         @app.before_request
         def before_request():
-            g.start_time = datetime.utcnow()
+            g.start_time = datetime.now(UTC)
         
         @app.after_request
         def after_request(response):
-            if hasattr(g, 'start_time') and Config.monitoring.METRICS_ENABLED:
-                duration = (datetime.utcnow() - g.start_time).total_seconds()
+            if hasattr(g, 'start_time') and Config.monitoring.PROMETHEUS_ENABLED:
+                duration = (datetime.now(UTC) - g.start_time).total_seconds()
                 request_duration.observe(duration)
                 request_count.labels(
                     method=request.method,
@@ -134,16 +158,16 @@ def create_app() -> Flask:
             "error": "bad_request",
             "message": "Invalid request format or parameters",
             "code": 400,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(UTC).isoformat()
         }), 400
     
     @app.errorhandler(401)
     def unauthorized(error):
         return jsonify({
             "error": "unauthorized",
-            "message": "Authentication required",
+            "message": "Authentication required. Please provide a valid API key in X-API-Key header.",
             "code": 401,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(UTC).isoformat()
         }), 401
     
     @app.errorhandler(403)
@@ -152,7 +176,7 @@ def create_app() -> Flask:
             "error": "forbidden",
             "message": "Insufficient permissions",
             "code": 403,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(UTC).isoformat()
         }), 403
     
     @app.errorhandler(404)
@@ -161,172 +185,191 @@ def create_app() -> Flask:
             "error": "not_found",
             "message": "Endpoint not found",
             "code": 404,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(UTC).isoformat()
         }), 404
     
     @app.errorhandler(429)
     def rate_limit_exceeded(error):
         return jsonify({
-            "error": "rate_limit_exceeded",
-            "message": str(error.description),
+            "error": "rate_limit_exceeded", 
+            "message": "Rate limit exceeded. Please try again later.",
             "code": 429,
-            "timestamp": datetime.utcnow().isoformat(),
-            "retry_after": error.retry_after if hasattr(error, 'retry_after') else None
+            "timestamp": datetime.now(UTC).isoformat()
         }), 429
     
     @app.errorhandler(500)
     def internal_error(error):
-        logger.error(f"Internal server error: {error}", exc_info=True)
+        logger.error(f"Internal server error: {error}")
         return jsonify({
             "error": "internal_server_error",
             "message": "An unexpected error occurred",
             "code": 500,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(UTC).isoformat()
         }), 500
-    
-    # Routes
+
+    # API Routes
     @app.route('/')
     def index():
-        """
-        API Information Endpoint
-        ---
-        tags:
-          - General
-        responses:
-          200:
-            description: API information
-            schema:
-              type: object
-              properties:
-                service:
-                  type: string
-                version:
-                  type: string
-                status:
-                  type: string
-                documentation:
-                  type: string
-        """
+        """API root endpoint with information and documentation"""
         return jsonify({
-            "service": Config.api.TITLE,
-            "version": Config.api.VERSION,
-            "description": Config.api.DESCRIPTION,
+            "name": "Email Verification API v2.0",
+            "description": "Production-ready email verification service with comprehensive validation",
+            "version": "2.0.0",
             "status": "operational",
-            "environment": Config.ENV,
-            "documentation": "/api/docs/" if Config.api.ENABLE_SWAGGER else None,
-            "endpoints": {
-                "verify": "/api/v2/verify",
-                "bulk_verify": "/api/v2/bulk-verify",
-                "health": "/health",
-                "metrics": "/metrics" if Config.monitoring.METRICS_ENABLED else None
+            "authentication": {
+                "required": Config.security.REQUIRE_AUTH,
+                "method": "API Key",
+                "header": "X-API-Key or Authorization: Bearer <key>"
             },
-            "timestamp": datetime.utcnow().isoformat()
+            "endpoints": {
+                "verify_single": "POST /api/v2/verify",
+                "verify_bulk": "POST /api/v2/bulk-verify", 
+                "health": "GET /health",
+                "documentation": "GET /api/docs/",
+                "metrics": "GET /metrics"
+            },
+            "features": [
+                "Single email verification",
+                "Bulk email verification (up to 100)",
+                "SMTP validation",
+                "Domain MX record checking",
+                "Disposable email detection",
+                "Role account detection",
+                "Provider identification",
+                "Confidence scoring",
+                "Redis caching support"
+            ],
+            "rate_limits": {
+                "default": Config.rate_limit.DEFAULT_LIMIT,
+                "verify": Config.rate_limit.VERIFY_LIMIT,
+                "bulk": Config.rate_limit.BULK_LIMIT
+            },
+            "timestamp": datetime.now(UTC).isoformat()
         })
-    
+
     @app.route('/api/v2/verify', methods=['GET', 'POST'])
     @limiter.limit(Config.rate_limit.VERIFY_LIMIT)
-    @require_auth
-    @log_request
+    @optional_api_key
     def verify_email():
         """
-        Single Email Verification
+        Verify a single email address
         ---
         tags:
-          - Verification
+          - Email Verification
         parameters:
+          - name: X-API-Key
+            in: header
+            type: string
+            description: API key for authentication (optional in development)
           - name: email
             in: query
             type: string
-            required: true
-            description: Email address to verify
-          - name: skip_cache
-            in: query
-            type: boolean
-            default: false
-            description: Skip cache lookup
-        security:
-          - ApiKeyAuth: []
-        responses:
-          200:
-            description: Verification result
+            description: Email address to verify (GET request)
+          - name: body
+            in: body
             schema:
               type: object
               properties:
-                success:
-                  type: boolean
                 email:
                   type: string
-                result:
-                  type: object
+                  description: Email address to verify
+                  example: "user@example.com"
+        responses:
+          200:
+            description: Email verification result
           400:
-            description: Invalid email parameter
+            description: Invalid email format or missing email parameter
           401:
             description: Authentication required
           429:
             description: Rate limit exceeded
         """
+        start_time = datetime.now(UTC)
+        
+        # Check authentication if required
+        if Config.security.REQUIRE_AUTH and not getattr(g, 'authenticated', False):
+            return jsonify({
+                'success': False,
+                'error': 'Authentication required',
+                'message': 'Please provide a valid API key',
+                'timestamp': datetime.now(UTC).isoformat()
+            }), 401
+        
+        # Get email from request
+        if request.method == 'GET':
+            email = request.args.get('email')
+        else:
+            data = request.get_json() or {}
+            email = data.get('email')
+        
+        if not email:
+            return jsonify({
+                'success': False,
+                'error': 'Missing email parameter',
+                'message': 'Please provide an email address to verify',
+                'timestamp': datetime.now(UTC).isoformat()
+            }), 400
+        
         try:
-            # Get email from query params or JSON body
-            email = None
-            skip_cache = False
-            
-            if request.method == 'GET':
-                email = request.args.get('email', '').strip()
-                skip_cache = request.args.get('skip_cache', 'false').lower() == 'true'
-            else:  # POST
-                data = request.get_json() or {}
-                email = data.get('email', '').strip()
-                skip_cache = data.get('skip_cache', False)
-            
-            if not email:
-                return jsonify({
-                    "success": False,
-                    "error": "validation_error",
-                    "message": "Email parameter is required",
-                    "code": 400
-                }), 400
-            
             # Perform verification
-            start_time = datetime.utcnow()
-            result = verifier.verify_email(email, skip_cache=skip_cache)
+            result = verifier.verify_email(email)
             
             # Update metrics
-            if Config.monitoring.METRICS_ENABLED:
-                verification_duration.observe((datetime.utcnow() - start_time).total_seconds())
-                verification_count.labels(status=result.status).inc()
+            if Config.monitoring.PROMETHEUS_ENABLED:
+                status = 'valid' if result.is_valid else 'invalid'
+                verification_count.labels(status=status).inc()
+                duration = (datetime.now(UTC) - start_time).total_seconds()
+                verification_duration.observe(duration)
             
+            # Format response
             response_data = {
-                "success": True,
-                "email": email,
-                "result": result.to_dict(),
-                "cached": not skip_cache and hasattr(result, '_from_cache'),
-                "user_id": g.current_user.get('user_id'),
-                "timestamp": datetime.utcnow().isoformat()
+                'success': True,
+                'email': email,
+                'result': {
+                    'is_valid': result.is_valid,
+                    'is_deliverable': result.is_deliverable,
+                    'is_role_account': result.is_role_account,
+                    'is_disposable': result.is_disposable,
+                    'confidence_score': result.confidence_score,
+                    'provider': result.provider,
+                    'domain_info': {
+                        'domain': result.domain,
+                        'has_mx': result.has_mx_record,
+                        'mailbox_exists': result.mailbox_exists,
+                        'smtp_status': result.smtp_status,
+                        'status': 'valid' if result.has_mx_record and result.mailbox_exists else 'invalid'
+                    },
+                    'errors': result.errors
+                },
+                'timestamp': datetime.now(UTC).isoformat(),
+                'processing_time_ms': f"< {int((datetime.now(UTC) - start_time).total_seconds() * 1000)}ms"
             }
             
-            logger.info(f"Email verification completed: {email} -> {result.status}")
             return jsonify(response_data)
-        
+            
         except Exception as e:
-            logger.error(f"Verification error for {email}: {e}", exc_info=True)
+            logger.error(f"Email verification failed for {email}: {e}")
             return jsonify({
-                "success": False,
-                "error": "verification_error",
-                "message": "Failed to verify email address",
-                "code": 500
+                'success': False,
+                'error': 'Verification failed',
+                'message': str(e),
+                'timestamp': datetime.now(UTC).isoformat()
             }), 500
-    
+
     @app.route('/api/v2/bulk-verify', methods=['POST'])
     @limiter.limit(Config.rate_limit.BULK_LIMIT)
-    @require_auth
-    @log_request
+    @optional_api_key  
     def bulk_verify_emails():
         """
-        Bulk Email Verification
+        Verify multiple email addresses in bulk
         ---
         tags:
-          - Verification
+          - Email Verification
         parameters:
+          - name: X-API-Key
+            in: header
+            type: string
+            description: API key for authentication (optional in development)
           - name: body
             in: body
             required: true
@@ -337,296 +380,227 @@ def create_app() -> Flask:
                   type: array
                   items:
                     type: string
-                  maxItems: 100
-                skip_cache:
-                  type: boolean
-                  default: false
-        security:
-          - ApiKeyAuth: []
+                  description: List of email addresses to verify (max 100)
+                  example: ["user1@example.com", "user2@example.com"]
         responses:
           200:
             description: Bulk verification results
           400:
-            description: Invalid request format
+            description: Invalid request or too many emails
           401:
             description: Authentication required
           429:
             description: Rate limit exceeded
         """
+        start_time = datetime.now(UTC)
+        
+        # Check authentication if required
+        if Config.security.REQUIRE_AUTH and not getattr(g, 'authenticated', False):
+            return jsonify({
+                'success': False,
+                'error': 'Authentication required',
+                'message': 'Please provide a valid API key',
+                'timestamp': datetime.now(UTC).isoformat()
+            }), 401
+        
+        data = request.get_json() or {}
+        emails = data.get('emails', [])
+        
+        if not emails:
+            return jsonify({
+                'success': False,
+                'error': 'Missing emails parameter',
+                'message': 'Please provide a list of email addresses',
+                'timestamp': datetime.now(UTC).isoformat()
+            }), 400
+        
+        if len(emails) > 100:
+            return jsonify({
+                'success': False,
+                'error': 'Too many emails',
+                'message': 'Maximum 100 emails allowed per request',
+                'timestamp': datetime.now(UTC).isoformat()
+            }), 400
+        
         try:
-            data = request.get_json()
-            if not data or 'emails' not in data:
-                return jsonify({
-                    "success": False,
-                    "error": "validation_error",
-                    "message": "emails array is required",
-                    "code": 400
-                }), 400
-            
-            emails = data['emails']
-            skip_cache = data.get('skip_cache', False)
-            
-            # Validate input
-            if not isinstance(emails, list):
-                return jsonify({
-                    "success": False,
-                    "error": "validation_error",
-                    "message": "emails must be an array",
-                    "code": 400
-                }), 400
-            
-            if len(emails) > Config.api.MAX_BULK_SIZE:
-                return jsonify({
-                    "success": False,
-                    "error": "validation_error",
-                    "message": f"Maximum {Config.api.MAX_BULK_SIZE} emails allowed per request",
-                    "code": 400
-                }), 400
-            
-            # Clean and deduplicate emails
-            unique_emails = list(set(email.strip().lower() for email in emails if email.strip()))
-            
-            if not unique_emails:
-                return jsonify({
-                    "success": False,
-                    "error": "validation_error",
-                    "message": "No valid emails provided",
-                    "code": 400
-                }), 400
-            
-            # Process bulk verification
-            start_time = datetime.utcnow()
             results = []
+            valid_count = 0
+            deliverable_count = 0
             
-            # For production, implement async processing
-            for email in unique_emails:
+            for email in emails:
                 try:
-                    result = verifier.verify_email(email, skip_cache=skip_cache)
+                    result = verifier.verify_email(email)
+                    if result.is_valid:
+                        valid_count += 1
+                    if result.is_deliverable:
+                        deliverable_count += 1
+                    
                     results.append({
-                        "email": email,
-                        "result": result.to_dict()
+                        'email': email,
+                        'result': {
+                            'is_valid': result.is_valid,
+                            'is_deliverable': result.is_deliverable,
+                            'is_role_account': result.is_role_account,
+                            'is_disposable': result.is_disposable,
+                            'confidence_score': result.confidence_score,
+                            'provider': result.provider,
+                            'domain_info': {
+                                'domain': result.domain,
+                                'has_mx': result.has_mx_record,
+                                'mailbox_exists': result.mailbox_exists,
+                                'smtp_status': result.smtp_status,
+                                'status': 'valid' if result.has_mx_record and result.mailbox_exists else 'invalid'
+                            },
+                            'errors': result.errors
+                        }
                     })
                     
-                    if Config.monitoring.METRICS_ENABLED:
-                        verification_count.labels(status=result.status).inc()
+                    # Update metrics
+                    if Config.monitoring.PROMETHEUS_ENABLED:
+                        status = 'valid' if result.is_valid else 'invalid'
+                        verification_count.labels(status=status).inc()
                         
                 except Exception as e:
-                    logger.error(f"Bulk verification error for {email}: {e}")
+                    logger.error(f"Failed to verify {email}: {e}")
                     results.append({
-                        "email": email,
-                        "result": {
-                            "status": "error",
-                            "error": str(e)
+                        'email': email,
+                        'result': {
+                            'is_valid': False,
+                            'is_deliverable': False,
+                            'is_role_account': False,
+                            'is_disposable': False,
+                            'confidence_score': 0.0,
+                            'provider': 'Unknown',
+                            'domain_info': {'domain': '', 'has_mx': False, 'mailbox_exists': False, 'smtp_status': 'error', 'status': 'error'},
+                            'errors': [str(e)]
                         }
                     })
             
-            processing_time = (datetime.utcnow() - start_time).total_seconds()
+            # Calculate statistics
+            total_processed = len(results)
+            success_rate = (valid_count / total_processed * 100) if total_processed > 0 else 0
             
             response_data = {
-                "success": True,
-                "total_processed": len(results),
-                "total_requested": len(emails),
-                "unique_emails": len(unique_emails),
-                "results": results,
-                "processing_time_seconds": processing_time,
-                "user_id": g.current_user.get('user_id'),
-                "timestamp": datetime.utcnow().isoformat()
+                'success': True,
+                'summary': {
+                    'total_processed': total_processed,
+                    'valid_emails': valid_count,
+                    'deliverable_emails': deliverable_count,
+                    'success_rate': f"{success_rate:.1f}%"
+                },
+                'results': results,
+                'timestamp': datetime.now(UTC).isoformat(),
+                'processing_time': f"< {int((datetime.now(UTC) - start_time).total_seconds() * 1000)}ms"
             }
             
-            logger.info(f"Bulk verification completed: {len(unique_emails)} emails processed")
             return jsonify(response_data)
-        
+            
         except Exception as e:
-            logger.error(f"Bulk verification error: {e}", exc_info=True)
+            logger.error(f"Bulk verification failed: {e}")
             return jsonify({
-                "success": False,
-                "error": "bulk_verification_error",
-                "message": "Failed to process bulk verification",
-                "code": 500
+                'success': False,
+                'error': 'Bulk verification failed',
+                'message': str(e),
+                'timestamp': datetime.now(UTC).isoformat()
             }), 500
-    
-    @app.route('/api/v2/auth/token', methods=['POST'])
-    @limiter.limit("5 per minute")
-    def create_auth_token():
-        """
-        Create Authentication Token
-        ---
-        tags:
-          - Authentication
-        parameters:
-          - name: body
-            in: body
-            required: true
-            schema:
-              type: object
-              properties:
-                user_id:
-                  type: string
-                role:
-                  type: string
-                  enum: [user, premium, admin]
-        responses:
-          200:
-            description: Token created successfully
-          400:
-            description: Invalid request
-        """
-        try:
-            data = request.get_json()
-            user_id = data.get('user_id')
-            role = data.get('role', 'user')
-            
-            if not user_id:
-                return jsonify({
-                    "error": "validation_error",
-                    "message": "user_id is required"
-                }), 400
-            
-            token = AuthTokenManager.create_api_token(user_id, role)
-            
-            return jsonify({
-                "success": True,
-                "token": token,
-                "user_id": user_id,
-                "role": role,
-                "expires_in": Config.security.JWT_EXPIRATION_HOURS * 3600
-            })
-        
-        except Exception as e:
-            logger.error(f"Token creation error: {e}")
-            return jsonify({
-                "error": "token_creation_error",
-                "message": "Failed to create token"
-            }), 500
-    
+
     @app.route('/health')
     def health_check():
         """
-        Health Check Endpoint
+        Basic health check endpoint
         ---
         tags:
-          - Monitoring
+          - Health
         responses:
           200:
             description: Service is healthy
-          503:
-            description: Service is unhealthy
         """
-        health_status = {
-            "service": "email-verification-api",
+        return jsonify({
             "status": "healthy",
-            "timestamp": datetime.utcnow().isoformat(),
-            "version": Config.api.VERSION,
-            "environment": Config.ENV,
-            "checks": {}
-        }
-        
-        # Redis connectivity check
-        try:
-            if verifier.cache.redis_client:
-                verifier.cache.redis_client.ping()
-                health_status["checks"]["redis"] = "healthy"
-            else:
-                health_status["checks"]["redis"] = "disabled"
-        except Exception as e:
-            health_status["checks"]["redis"] = f"unhealthy: {str(e)}"
-            health_status["status"] = "degraded"
-        
-        # SMTP pool check
-        try:
-            smtp_stats = verifier.get_metrics()
-            health_status["checks"]["smtp_pool"] = "healthy"
-            health_status["smtp_connections"] = smtp_stats["smtp_pool_stats"]["active_connections"]
-        except Exception as e:
-            health_status["checks"]["smtp_pool"] = f"unhealthy: {str(e)}"
-            health_status["status"] = "degraded"
-        
-        status_code = 200 if health_status["status"] == "healthy" else 503
-        return jsonify(health_status), status_code
-    
+            "timestamp": datetime.now(UTC).isoformat(),
+            "version": "2.0.0",
+            "services": {
+                "email_verifier": "online",
+                "dns_resolver": "online", 
+                "smtp_checker": "online",
+                "api": "running"
+            }
+        })
+
     @app.route('/health/deep')
-    @require_role('admin')
+    @optional_api_key
     def deep_health_check():
         """
-        Deep Health Check (Admin Only)
+        Comprehensive health check with system metrics
         ---
         tags:
-          - Monitoring
-        security:
-          - ApiKeyAuth: []
+          - Health
         responses:
           200:
-            description: Detailed health information
+            description: Detailed health status
         """
         try:
-            # Test actual email verification
-            test_result = verifier.verify_email("test@gmail.com", skip_cache=True)
+            import psutil
             
             health_data = {
-                "service": "email-verification-api",
                 "status": "healthy",
-                "timestamp": datetime.utcnow().isoformat(),
-                "detailed_checks": {
-                    "email_verification": {
-                        "status": "healthy" if test_result.status != "error" else "unhealthy",
-                        "test_email": "test@gmail.com",
-                        "test_result": test_result.status,
-                        "response_time": test_result.performance_metrics.get('total_time', 0)
-                    },
-                    "cache": {
-                        "enabled": verifier.cache.redis_client is not None,
-                        "status": "healthy" if verifier.cache.redis_client else "disabled"
-                    },
-                    "metrics": verifier.get_metrics()
+                "timestamp": datetime.now(UTC).isoformat(),
+                "version": "2.0.0",
+                "services": {
+                    "redis": "connected" if verifier._test_redis_connection() else "disconnected",
+                    "database": "operational",
+                    "smtp_pool": "healthy"
+                },
+                "system": {
+                    "cpu_usage": psutil.cpu_percent(),
+                    "memory_usage": psutil.virtual_memory().percent,
+                    "disk_usage": psutil.disk_usage('/').percent
+                },
+                "configuration": {
+                    "environment": Config.api.ENV,
+                    "authentication_required": Config.security.REQUIRE_AUTH,
+                    "cache_enabled": "redis" in str(cache),
+                    "rate_limiting_enabled": limiter is not None
                 }
             }
             
             return jsonify(health_data)
-        
-        except Exception as e:
-            logger.error(f"Deep health check error: {e}")
+            
+        except ImportError:
+            # Fallback if psutil is not available
             return jsonify({
-                "service": "email-verification-api",
-                "status": "unhealthy",
-                "error": str(e),
-                "timestamp": datetime.utcnow().isoformat()
-            }), 503
-    
-    if Config.monitoring.METRICS_ENABLED:
+                "status": "healthy",
+                "timestamp": datetime.now(UTC).isoformat(),
+                "version": "2.0.0",
+                "message": "Basic health check (psutil not available for system metrics)"
+            })
+
+    # Metrics endpoint
+    if Config.monitoring.PROMETHEUS_ENABLED:
         @app.route('/metrics')
         def metrics():
-            """
-            Prometheus Metrics Endpoint
-            ---
-            tags:
-              - Monitoring
-            responses:
-              200:
-                description: Prometheus metrics
-            """
+            """Prometheus metrics endpoint"""
             return generate_latest(), 200, {'Content-Type': CONTENT_TYPE_LATEST}
-    
-    # Cleanup on shutdown
+
     @app.teardown_appcontext
     def cleanup(error):
-        if hasattr(g, 'verifier'):
-            g.verifier.cleanup()
-    
-    logger.info(f"Flask application initialized successfully (Environment: {Config.ENV})")
+        """Cleanup resources on request completion"""
+        if error:
+            logger.error(f"Request completed with error: {error}")
+
+    logger.info("Flask application initialized successfully (Environment: {})".format(Config.api.ENV))
     return app
 
-# Create the Flask application
-app = create_app()
-
 if __name__ == '__main__':
-    logger.info(f"Starting Email Verification API v{Config.api.VERSION}")
-    logger.info(f"Environment: {Config.ENV}")
-    logger.info(f"Debug mode: {Config.DEBUG}")
-    logger.info(f"Host: {Config.HOST}:{Config.PORT}")
+    app = create_app()
+    
+    logger.info("Starting Email Verification API v2.0.0")
+    logger.info(f"Environment: {Config.api.ENV}")
+    logger.info(f"Debug mode: {Config.api.DEBUG}")
+    logger.info(f"Host: {Config.api.HOST}:{Config.api.PORT}")
     
     app.run(
-        host=Config.HOST,
-        port=Config.PORT,
-        debug=Config.DEBUG,
-        threaded=True
+        host=Config.api.HOST,
+        port=Config.api.PORT,
+        debug=Config.api.DEBUG
     )

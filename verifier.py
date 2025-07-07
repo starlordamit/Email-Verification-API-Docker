@@ -6,7 +6,7 @@ import hashlib
 import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, asdict
 from email_validator import validate_email, EmailNotValidError
@@ -46,6 +46,89 @@ class VerificationResult:
     performance_metrics: Dict[str, float]
     timestamp: datetime
     
+    # Properties for backward compatibility with app.py expectations
+    @property
+    def is_deliverable(self) -> bool:
+        """Check if email is deliverable"""
+        return self.status in ['deliverable', 'risky'] and self.is_valid
+    
+    @property
+    def is_role_account(self) -> bool:
+        """Check if email is a role account"""
+        return self.security_flags.get('is_role_account', False)
+    
+    @property
+    def is_disposable(self) -> bool:
+        """Check if email uses disposable domain"""
+        return self.security_flags.get('is_disposable', False)
+    
+    @property
+    def provider(self) -> str:
+        """Get email provider name"""
+        return self.provider_info.get('name', 'Unknown')
+    
+    @property
+    def domain(self) -> str:
+        """Get domain from email"""
+        return self.email_address.split('@')[1] if '@' in self.email_address else ''
+    
+    @property
+    def has_mx_record(self) -> bool:
+        """Check if domain has MX records"""
+        return self.domain_details.get('dns', {}).get('mx_found', False)
+    
+    @property
+    def mailbox_exists(self) -> bool:
+        """Check if the specific mailbox exists via SMTP"""
+        return self.domain_details.get('smtp', {}).get('mailbox_exists', False)
+    
+    @property
+    def smtp_status(self) -> str:
+        """Get SMTP verification status"""
+        smtp_info = self.domain_details.get('smtp', {})
+        if smtp_info.get('mailbox_exists'):
+            return 'exists'
+        elif smtp_info.get('is_disabled'):
+            return 'disabled'
+        elif smtp_info.get('is_full'):
+            return 'full'
+        elif smtp_info.get('response_code') in [450, 451, 452]:
+            return 'temporary_error'
+        elif smtp_info.get('smtp_response') == 'No MX records':
+            return 'no_mx'
+        elif smtp_info.get('smtp_response') == 'All SMTP servers unreachable':
+            return 'unreachable'
+        else:
+            return 'unknown'
+    
+    @property
+    def errors(self) -> List[str]:
+        """Get list of validation errors"""
+        errors = []
+        
+        # Format errors
+        format_details = self.validation_details.get('format', {})
+        if not format_details.get('valid', True):
+            errors.append(format_details.get('error', 'Invalid email format'))
+        
+        # DNS errors
+        dns_details = self.domain_details.get('dns', {})
+        if 'error' in dns_details:
+            errors.append(f"DNS error: {dns_details['error']}")
+        elif not dns_details.get('mx_found', False):
+            errors.append("No MX records found for domain")
+        
+        # SMTP errors
+        smtp_details = self.domain_details.get('smtp', {})
+        if not smtp_details.get('mailbox_exists', False):
+            smtp_response = smtp_details.get('smtp_response', '')
+            if smtp_response and smtp_response not in ['No MX records', 'All SMTP servers unreachable']:
+                errors.append(f"SMTP: {smtp_response}")
+            elif smtp_response == 'All SMTP servers unreachable':
+                errors.append("SMTP servers are unreachable")
+        
+        return errors if errors else []
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization"""
         result = asdict(self)
@@ -272,7 +355,13 @@ class ProductionEmailVerifier:
             cached_result = self.cache.get(email)
             if cached_result:
                 logger.debug(f"Cache hit for {email}")
-                return VerificationResult(**cached_result)
+                try:
+                    # Try to create VerificationResult from cached data
+                    # Handle potential structure mismatches from old cache entries
+                    return VerificationResult(**cached_result)
+                except (TypeError, ValueError) as e:
+                    logger.warning(f"Cached result for {email} has incompatible structure, skipping cache: {e}")
+                    # Fall through to perform fresh verification
         
         # Perform verification
         result = await self._perform_verification(email, start_time)
@@ -307,7 +396,7 @@ class ProductionEmailVerifier:
             provider_info={},
             security_flags={},
             performance_metrics={},
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
         
         try:
@@ -322,23 +411,29 @@ class ProductionEmailVerifier:
             
             domain = email.split('@')[1]
             
-            # Step 2: Domain analysis
+            # Step 2: Domain analysis (basic info)
             domain_info = await self._analyze_domain(domain)
             result.domain_details = domain_info
             
             # Step 3: DNS checks
             dns_check = await self._check_dns(domain)
             result.validation_details['dns'] = dns_check
+            # IMPORTANT: Also store DNS results in domain_details for property access
+            result.domain_details['dns'] = dns_check
             
             if not dns_check['mx_found']:
                 result.status = "undeliverable"
                 result.confidence_score = 20
+                result.is_valid = False
                 result.performance_metrics['total_time'] = time.time() - start_time
+                logger.info(f"Verification completed for {email}: {result.status} (score: {result.confidence_score}) - No MX records")
                 return result
             
-            # Step 4: SMTP verification
+            # Step 4: SMTP verification (mailbox check)
             smtp_check = await self._check_smtp(email, dns_check['mx_records'])
             result.validation_details['smtp'] = smtp_check
+            # Also store SMTP results in domain_details for comprehensive domain info
+            result.domain_details['smtp'] = smtp_check
             
             # Step 5: Security analysis
             security_analysis = await self._analyze_security(email, domain)
@@ -374,7 +469,7 @@ class ProductionEmailVerifier:
             return {
                 'valid': True,
                 'normalized': valid.email,
-                'local_part': valid.local,
+                'local_part': valid.local_part,
                 'domain_part': valid.domain,
                 'ascii_email': valid.ascii_email,
                 'smtputf8': valid.smtputf8
@@ -442,7 +537,7 @@ class ProductionEmailVerifier:
             }
     
     async def _check_smtp(self, email: str, mx_records: List[str]) -> Dict[str, Any]:
-        """SMTP mailbox verification"""
+        """Enhanced SMTP mailbox verification"""
         if not mx_records:
             return {
                 'mailbox_exists': False,
@@ -450,13 +545,17 @@ class ProductionEmailVerifier:
                 'response_code': None,
                 'is_catch_all': False,
                 'is_disabled': False,
-                'is_full': False
+                'is_full': False,
+                'mx_server': None
             }
+        
+        last_error = None
         
         for mx_server in mx_records[:3]:  # Try top 3 MX servers
             try:
                 conn = self.smtp_pool.get_connection(mx_server)
                 if not conn:
+                    last_error = f"Could not connect to {mx_server}"
                     continue
                 
                 # Try MAIL FROM
@@ -466,14 +565,39 @@ class ProductionEmailVerifier:
                 code, response = conn.rcpt(email)
                 response_text = response.decode('utf-8', errors='ignore') if isinstance(response, bytes) else str(response)
                 
+                # Determine mailbox status based on SMTP response codes
+                mailbox_exists = False
+                is_disabled = False
+                is_full = False
+                is_catch_all = False
+                
+                if code == 250:
+                    mailbox_exists = True
+                elif code in [450, 451, 452]:  # Temporary failures
+                    # These could indicate the mailbox exists but is temporarily unavailable
+                    mailbox_exists = True
+                elif code == 550:
+                    # Mailbox doesn't exist
+                    if 'disabled' in response_text.lower() or 'suspended' in response_text.lower():
+                        is_disabled = True
+                    elif 'catch' in response_text.lower() and 'all' in response_text.lower():
+                        is_catch_all = True
+                elif code == 552:
+                    # Mailbox full
+                    is_full = True
+                    mailbox_exists = True  # Mailbox exists but is full
+                elif code == 553:
+                    # Invalid mailbox name
+                    pass  # mailbox_exists remains False
+                
                 result = {
-                    'mailbox_exists': code == 250,
+                    'mailbox_exists': mailbox_exists,
                     'smtp_response': response_text,
                     'response_code': code,
                     'mx_server': mx_server,
-                    'is_catch_all': False,
-                    'is_disabled': 'disabled' in response_text.lower(),
-                    'is_full': code == 552 or 'full' in response_text.lower()
+                    'is_catch_all': is_catch_all,
+                    'is_disabled': is_disabled,
+                    'is_full': is_full
                 }
                 
                 # Reset for next verification
@@ -482,19 +606,22 @@ class ProductionEmailVerifier:
                 except:
                     pass
                 
+                logger.debug(f"SMTP check for {email} on {mx_server}: code={code}, exists={mailbox_exists}")
                 return result
                 
             except Exception as e:
-                logger.debug(f"SMTP check failed for {mx_server}: {e}")
+                last_error = f"SMTP check failed for {mx_server}: {e}"
+                logger.debug(last_error)
                 continue
         
         return {
             'mailbox_exists': False,
-            'smtp_response': 'All SMTP servers unreachable',
+            'smtp_response': last_error or 'All SMTP servers unreachable',
             'response_code': None,
             'is_catch_all': False,
             'is_disabled': False,
-            'is_full': False
+            'is_full': False,
+            'mx_server': None
         }
     
     async def _analyze_security(self, email: str, domain: str) -> Dict[str, bool]:
@@ -573,11 +700,15 @@ class ProductionEmailVerifier:
             score += 25
         
         # SMTP response (30 points)
-        smtp_check = result.validation_details.get('smtp', {})
+        smtp_check = result.domain_details.get('smtp', {})
         if smtp_check.get('mailbox_exists'):
             score += 30
+        elif smtp_check.get('is_full'):  # Mailbox exists but full
+            score += 25
         elif smtp_check.get('response_code') in [450, 451, 452]:  # Temporary errors
             score += 15
+        elif smtp_check.get('is_disabled'):  # Disabled mailbox
+            score += 10
         
         # Security flags (deductions)
         security = result.security_flags
@@ -629,6 +760,17 @@ class ProductionEmailVerifier:
                 'active_connections': len(self.smtp_pool.connections)
             }
         }
+    
+    def _test_redis_connection(self) -> bool:
+        """Test Redis connection for health checks"""
+        if not self.cache.redis_client:
+            return False
+        
+        try:
+            self.cache.redis_client.ping()
+            return True
+        except Exception:
+            return False
     
     def cleanup(self):
         """Cleanup resources"""

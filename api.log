@@ -1,0 +1,72 @@
+{"timestamp": "2025-07-07 20:44:33", "level": "INFO", "logger": "config", "message": "Configuration loaded - Environment: development", "module": "config", "function": "_validate_config", "line": 104}
+{"timestamp": "2025-07-07 20:44:33", "level": "INFO", "logger": "config", "message": "Authentication required: False", "module": "config", "function": "_validate_config", "line": 105}
+{"timestamp": "2025-07-07 20:44:33", "level": "INFO", "logger": "config", "message": "Redis URL: redis://localhost:6379/0", "module": "config", "function": "_validate_config", "line": 106}
+{"timestamp": "2025-07-07 20:44:33", "level": "INFO", "logger": "config", "message": "Server: 0.0.0.0:5004", "module": "config", "function": "_validate_config", "line": 107}
+{"timestamp": "2025-07-07 20:44:34", "level": "WARNING", "logger": "__main__", "message": "Redis unavailable for caching (Error 61 connecting to localhost:6379. Connection refused.), falling back to simple cache", "module": "app", "function": "create_app", "line": 76}
+{"timestamp": "2025-07-07 20:44:34", "level": "WARNING", "logger": "__main__", "message": "Redis unavailable for rate limiting (Error 61 connecting to localhost:6379. Connection refused.), disabling rate limiting for now", "module": "app", "function": "create_app", "line": 101}
+{"timestamp": "2025-07-07 20:44:34", "level": "WARNING", "logger": "verifier", "message": "Redis connection failed: Error 61 connecting to localhost:6379. Connection refused.. Operating without cache.", "module": "verifier", "function": "_connect_redis", "line": 77}
+{"timestamp": "2025-07-07 20:44:34", "level": "INFO", "logger": "__main__", "message": "Flask application initialized successfully (Environment: development)", "module": "app", "function": "create_app", "line": 587}
+{"timestamp": "2025-07-07 20:44:34", "level": "INFO", "logger": "__main__", "message": "Starting Email Verification API v2.0.0", "module": "app", "function": "<module>", "line": 593}
+{"timestamp": "2025-07-07 20:44:34", "level": "INFO", "logger": "__main__", "message": "Environment: development", "module": "app", "function": "<module>", "line": 594}
+{"timestamp": "2025-07-07 20:44:34", "level": "INFO", "logger": "__main__", "message": "Debug mode: True", "module": "app", "function": "<module>", "line": 595}
+{"timestamp": "2025-07-07 20:44:34", "level": "INFO", "logger": "__main__", "message": "Host: 0.0.0.0:5004", "module": "app", "function": "<module>", "line": 596}
+ * Serving Flask app 'app'
+ * Debug mode: on
+{"timestamp": "2025-07-07 20:44:34", "level": "INFO", "logger": "werkzeug", "message": "[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5004
+ * Running on http://192.168.1.51:5004", "module": "_internal", "function": "_log", "line": 97}
+{"timestamp": "2025-07-07 20:44:34", "level": "INFO", "logger": "werkzeug", "message": "[33mPress CTRL+C to quit[0m", "module": "_internal", "function": "_log", "line": 97}
+{"timestamp": "2025-07-07 20:44:34", "level": "INFO", "logger": "werkzeug", "message": " * Restarting with stat", "module": "_internal", "function": "_log", "line": 97}
+{"timestamp": "2025-07-07 20:44:34", "level": "INFO", "logger": "config", "message": "Configuration loaded - Environment: development", "module": "config", "function": "_validate_config", "line": 104}
+{"timestamp": "2025-07-07 20:44:34", "level": "INFO", "logger": "config", "message": "Authentication required: False", "module": "config", "function": "_validate_config", "line": 105}
+{"timestamp": "2025-07-07 20:44:34", "level": "INFO", "logger": "config", "message": "Redis URL: redis://localhost:6379/0", "module": "config", "function": "_validate_config", "line": 106}
+{"timestamp": "2025-07-07 20:44:34", "level": "INFO", "logger": "config", "message": "Server: 0.0.0.0:5004", "module": "config", "function": "_validate_config", "line": 107}
+{"timestamp": "2025-07-07 20:44:34", "level": "WARNING", "logger": "__main__", "message": "Redis unavailable for caching (Error 61 connecting to localhost:6379. Connection refused.), falling back to simple cache", "module": "app", "function": "create_app", "line": 76}
+{"timestamp": "2025-07-07 20:44:34", "level": "WARNING", "logger": "__main__", "message": "Redis unavailable for rate limiting (Error 61 connecting to localhost:6379. Connection refused.), disabling rate limiting for now", "module": "app", "function": "create_app", "line": 101}
+{"timestamp": "2025-07-07 20:44:34", "level": "WARNING", "logger": "verifier", "message": "Redis connection failed: Error 61 connecting to localhost:6379. Connection refused.. Operating without cache.", "module": "verifier", "function": "_connect_redis", "line": 77}
+{"timestamp": "2025-07-07 20:44:34", "level": "INFO", "logger": "__main__", "message": "Flask application initialized successfully (Environment: development)", "module": "app", "function": "create_app", "line": 587}
+{"timestamp": "2025-07-07 20:44:34", "level": "INFO", "logger": "__main__", "message": "Starting Email Verification API v2.0.0", "module": "app", "function": "<module>", "line": 593}
+{"timestamp": "2025-07-07 20:44:34", "level": "INFO", "logger": "__main__", "message": "Environment: development", "module": "app", "function": "<module>", "line": 594}
+{"timestamp": "2025-07-07 20:44:34", "level": "INFO", "logger": "__main__", "message": "Debug mode: True", "module": "app", "function": "<module>", "line": 595}
+{"timestamp": "2025-07-07 20:44:34", "level": "INFO", "logger": "__main__", "message": "Host: 0.0.0.0:5004", "module": "app", "function": "<module>", "line": 596}
+{"timestamp": "2025-07-07 20:44:34", "level": "WARNING", "logger": "werkzeug", "message": " * Debugger is active!", "module": "_internal", "function": "_log", "line": 97}
+{"timestamp": "2025-07-07 20:44:34", "level": "INFO", "logger": "werkzeug", "message": " * Debugger PIN: 938-605-173", "module": "_internal", "function": "_log", "line": 97}
+Traceback (most recent call last):
+  File "/Users/amitkumar/Email Validator - 07072025/Email-Verification-API-Docker/app.py", line 598, in <module>
+    app.run(
+    ~~~~~~~^
+        host=Config.api.HOST,
+        ^^^^^^^^^^^^^^^^^^^^^
+        port=Config.api.PORT,
+        ^^^^^^^^^^^^^^^^^^^^^
+        debug=Config.api.DEBUG
+        ^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/amitkumar/Email Validator - 07072025/Email-Verification-API-Docker/venv/lib/python3.13/site-packages/flask/app.py", line 662, in run
+    run_simple(t.cast(str, host), port, self, **options)
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/amitkumar/Email Validator - 07072025/Email-Verification-API-Docker/venv/lib/python3.13/site-packages/werkzeug/serving.py", line 1115, in run_simple
+    run_with_reloader(
+    ~~~~~~~~~~~~~~~~~^
+        srv.serve_forever,
+        ^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        reloader_type=reloader_type,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/amitkumar/Email Validator - 07072025/Email-Verification-API-Docker/venv/lib/python3.13/site-packages/werkzeug/_reloader.py", line 459, in run_with_reloader
+    ensure_echo_on()
+    ~~~~~~~~~~~~~~^^
+  File "/Users/amitkumar/Email Validator - 07072025/Email-Verification-API-Docker/venv/lib/python3.13/site-packages/werkzeug/_reloader.py", line 439, in ensure_echo_on
+    termios.tcsetattr(sys.stdin, termios.TCSANOW, attributes)
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+termios.error: (4, 'Interrupted system call')
+Fatal Python error: init_sys_streams: can't initialize sys standard streams
+Python runtime state: core initialized
+OSError: [Errno 9] Bad file descriptor
+
+Current thread 0x0000000207d54c40 (most recent call first):
+  <no Python frame>
