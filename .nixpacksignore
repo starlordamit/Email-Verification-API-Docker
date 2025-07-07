@@ -1,0 +1,63 @@
+# Nixpacks ignore file - exclude these from deployment
+
+# Virtual environment
+venv/
+.venv/
+env/
+.env/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Docker files (not needed for Nixpacks)
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+docker-rebuild.sh
+
+# Git
+.git/
+.gitignore
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Documentation (optional - remove if you want docs in deployment)
+*.md
+docs/
+
+# Development scripts
+test_*.py
+*_test.py
+
+# Environment files (use nixpacks.toml variables instead)
+.env.local
+.env.development
+.env.test
+
+# Temporary files
+.tmp/
+temp/
+*.tmp 

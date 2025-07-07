@@ -60,6 +60,34 @@ docker build -t email-api . && docker run -p 5004:5004 email-api
 docker-compose up -d
 ```
 
+## ☁️ Cloud Deployment with Nixpacks
+
+**One-click deployment to Railway, Render, Heroku, and more!**
+
+```bash
+# Test Nixpacks build locally
+./deploy-nixpacks.sh
+
+# Push to GitHub and connect to your cloud platform
+git push origin main
+```
+
+**Supported Platforms:**
+- 🚂 **Railway**: `https://railway.app` (Recommended)
+- 🎨 **Render**: `https://render.com`
+- 💜 **Heroku**: `https://heroku.com` 
+- ⚡ **Vercel**: `https://vercel.com`
+
+**Required Environment Variables:**
+```bash
+PORT=5000
+ENV=production
+REDIS_URL=<your-redis-url>  # Platform will provide this
+API_KEY=<your-secure-key>
+```
+
+> **✨ Auto-Detection**: Platforms automatically detect `nixpacks.toml` and `Procfile` for zero-config deployment!
+
 ## 📊 API Endpoints
 
 | Endpoint | Method | Description |
