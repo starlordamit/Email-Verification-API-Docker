@@ -44,7 +44,7 @@ class APIConfig:
     ENV: str = os.getenv("ENV", "development")
     DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
     HOST: str = os.getenv("HOST", "0.0.0.0")
-    PORT: int = int(os.getenv("PORT", "5004"))
+    PORT: int = int(os.getenv("PORT", "5000"))
     WORKERS: int = int(os.getenv("WORKERS", "4"))
 
 @dataclass
@@ -97,8 +97,8 @@ class Config:
         
         # Validate API settings
         if self.api.PORT < 1 or self.api.PORT > 65535:
-            logger.warning(f"Invalid port {self.api.PORT}, using default 5004")
-            self.api.PORT = 5003
+            logger.warning(f"Invalid port {self.api.PORT}, using default 5000")
+            self.api.PORT = 5000
         
         # Log configuration summary
         logger.info(f"Configuration loaded - Environment: {self.api.ENV}")
