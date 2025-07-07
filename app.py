@@ -26,7 +26,7 @@ def index():
     })
 
 @app.route('/api/verify', methods=['GET'])
-@limiter.limit("10 per minute")
+@limiter.limit("100 per minute")
 def verify_email():
     email = request.args.get('email')
     
