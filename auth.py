@@ -96,21 +96,11 @@ def optional_api_key(f):
     
     return decorated_function
 
-# Initialize global auth instance
-auth_instance = SimpleAuth()
-
-def is_authenticated() -> bool:
-    """Check if current request is authenticated"""
-    return getattr(g, 'authenticated', False)
-
-def get_current_api_key() -> str:
-    """Get the API key used in current request"""
-    return getattr(g, 'api_key_used', '')
-
 def get_auth_info() -> dict:
     """Get authentication information for current request"""
+    auth = SimpleAuth()
     return {
-        'authenticated': is_authenticated(),
-        'api_key_provided': bool(get_current_api_key()),
-        'auth_required': auth_instance.require_auth
+        'authenticated': getattr(g, 'authenticated', False),
+        'api_key_provided': bool(getattr(g, 'api_key_used', '')),
+        'auth_required': auth.require_auth
     }
