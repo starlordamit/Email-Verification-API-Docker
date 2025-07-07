@@ -9,6 +9,6 @@ class Config:
     OPENAPI_VERSION = "3.0.3"
     API_KEY = os.getenv("API_KEY", "default-secret-key")
     REQUIRED_API_KEY = True
-    RATELIMIT_DEFAULT = "100 per day"
+    RATELIMIT_DEFAULT = "10000 per day"
     SMTP_TIMEOUT = 10
     SMTP_FROM_EMAIL = "verify@emailverifier.com"
